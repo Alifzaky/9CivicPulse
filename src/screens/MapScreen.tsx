@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
+
 import {
   ActivityIndicator,
   Pressable,
@@ -7,14 +14,29 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import MapView, { Circle, PROVIDER_GOOGLE } from 'react-native-maps';
+
+import MapView, {
+  Circle,
+  PROVIDER_GOOGLE,
+} from 'react-native-maps';
+
 import { SafeAreaView } from 'react-native-safe-area-context';
+
 import { ReportMarker } from '../components/ReportMarker';
 import { MOCK_REPORTS } from '../data/mockReports';
 import { useLocationTracking } from '../hooks/useLocationTracking';
 import { useCivicStore } from '../store/useCivicStore';
+
 import type { CivicReport } from '../types';
-import { formatDistance, haversineDistance } from '../utils/haversine';
+
+import {
+  formatDistance,
+  haversineDistance,
+} from '../utils/haversine';
+
+interface MapScreenProps {
+  onCreateReport: () => void;
+}
 
 const DEFAULT_REGION = {
   latitude: -7.2575,
@@ -23,59 +45,110 @@ const DEFAULT_REGION = {
   longitudeDelta: 0.035,
 };
 
-export default function MapScreen() {
+export default function MapScreen({
+  onCreateReport,
+}: MapScreenProps) {
   const { width, height } = useWindowDimensions();
-  const isLandscape = width > height;
-  const { location, accuracy, status, errorMessage, startTracking } = useLocationTracking();
 
-  // Precision selectors: komponen hanya subscribe pada state yang dibutuhkan.
+  const isLandscape = width > height;
+
+  const {
+    location,
+    accuracy,
+    status,
+    errorMessage,
+    startTracking,
+  } = useLocationTracking();
+
+  // Precision selectors Zustand.
   const reports = useCivicStore((state) => state.reports);
-  const selectedReportId = useCivicStore((state) => state.selectedReportId);
-  const setReports = useCivicStore((state) => state.setReports);
-  const selectReport = useCivicStore((state) => state.selectReport);
+  const selectedReportId = useCivicStore(
+    (state) => state.selectedReportId,
+  );
+
+  const setReports = useCivicStore(
+    (state) => state.setReports,
+  );
+
+  const selectReport = useCivicStore(
+    (state) => state.selectReport,
+  );
 
   const [mapReady, setMapReady] = useState(false);
 
+  // Inisialisasi laporan.
   useEffect(() => {
     setReports(MOCK_REPORTS);
   }, [setReports]);
 
+  // Mengambil laporan yang sedang dipilih.
   const selectedReport = useMemo(
-    () => reports.find((report) => report.id === selectedReportId) ?? null,
+    () =>
+      reports.find(
+        (report) => report.id === selectedReportId,
+      ) ?? null,
     [reports, selectedReportId],
   );
 
+  // Menghitung jarak pengguna ke laporan.
   const distanceLabel = useMemo(() => {
-    if (!location || !selectedReport) return null;
+    if (!location || !selectedReport) {
+      return null;
+    }
+
     const meters = haversineDistance(location, {
       latitude: selectedReport.latitude,
       longitude: selectedReport.longitude,
     });
+
     return formatDistance(meters);
   }, [location, selectedReport]);
 
+  // Callback marker.
   const handleMarkerPress = useCallback(
-    (report: CivicReport) => selectReport(report.id),
+    (report: CivicReport) => {
+      selectReport(report.id);
+    },
     [selectReport],
   );
 
+  // Wilayah awal peta.
   const initialRegion = location
-    ? { ...location, latitudeDelta: 0.012, longitudeDelta: 0.012 }
+    ? {
+        ...location,
+        latitudeDelta: 0.012,
+        longitudeDelta: 0.012,
+      }
     : DEFAULT_REGION;
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      {/* HEADER */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.eyebrow}>CIVIC PULSE</Text>
-          <Text style={styles.heading}>Peta Laporan Warga</Text>
+          <Text style={styles.eyebrow}>
+            CIVIC PULSE
+          </Text>
+
+          <Text style={styles.heading}>
+            Peta Laporan Warga
+          </Text>
         </View>
+
         <View style={styles.countBadge}>
-          <Text style={styles.countText}>{reports.length} laporan</Text>
+          <Text style={styles.countText}>
+            {reports.length} laporan
+          </Text>
         </View>
       </View>
 
-      <View style={[styles.mapContainer, isLandscape && styles.mapLandscape]}>
+      {/* INTERACTIVE MAP */}
+      <View
+        style={[
+          styles.mapContainer,
+          isLandscape && styles.mapLandscape,
+        ]}
+      >
         <MapView
           style={StyleSheet.absoluteFill}
           provider={PROVIDER_GOOGLE}
@@ -86,7 +159,11 @@ export default function MapScreen() {
           mapType="standard"
         >
           {reports.map((report) => (
-            <ReportMarker key={report.id} report={report} onPress={handleMarkerPress} />
+            <ReportMarker
+              key={report.id}
+              report={report}
+              onPress={handleMarkerPress}
+            />
           ))}
 
           {location && (
@@ -101,61 +178,120 @@ export default function MapScreen() {
 
         {!mapReady && (
           <View style={styles.mapLoading}>
-            <ActivityIndicator size="large" color="#2563EB" />
-            <Text style={styles.mutedText}>Memuat peta...</Text>
+            <ActivityIndicator
+              size="large"
+              color="#2563EB"
+            />
+
+            <Text style={styles.mutedText}>
+              Memuat peta...
+            </Text>
           </View>
         )}
       </View>
 
+      {/* LOCATION PANEL */}
       <View style={styles.panel}>
         <View style={styles.panelTopRow}>
-          <Text style={styles.panelTitle}>Status lokasi</Text>
+          <Text style={styles.panelTitle}>
+            Status lokasi
+          </Text>
+
           <Text style={styles.statusText}>
-            {status === 'tracking' ? 'GPS aktif' : status === 'denied' ? 'Izin ditolak' : 'Belum aktif'}
+            {status === 'tracking'
+              ? 'GPS aktif'
+              : status === 'denied'
+                ? 'Izin ditolak'
+                : 'Belum aktif'}
           </Text>
         </View>
 
         {location ? (
           <Text style={styles.coordinateText}>
-            {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
-            {accuracy !== null ? `  •  ±${Math.round(accuracy)} m` : ''}
+            {location.latitude.toFixed(6)},{' '}
+            {location.longitude.toFixed(6)}
+            {accuracy !== null
+              ? `  •  ±${Math.round(accuracy)} m`
+              : ''}
           </Text>
         ) : (
-          <Text style={styles.mutedText}>Aktifkan GPS untuk mendapatkan koordinat perangkat.</Text>
+          <Text style={styles.mutedText}>
+            Aktifkan GPS untuk mendapatkan koordinat perangkat.
+          </Text>
         )}
 
-        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+        {errorMessage ? (
+          <Text style={styles.errorText}>
+            {errorMessage}
+          </Text>
+        ) : null}
 
+        {/* GPS BUTTON */}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Aktifkan pelacakan lokasi"
           onPress={startTracking}
-          style={({ pressed }) => [styles.locationButton, pressed && styles.buttonPressed]}
+          style={({ pressed }) => [
+            styles.locationButton,
+            pressed && styles.buttonPressed,
+          ]}
         >
           <Text style={styles.locationButtonText}>
-            {status === 'tracking' ? 'Perbarui layanan lokasi' : 'Aktifkan lokasi'}
+            {status === 'tracking'
+              ? 'Perbarui layanan lokasi'
+              : 'Aktifkan lokasi'}
+          </Text>
+        </Pressable>
+
+        {/* CREATE REPORT BUTTON */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Buat laporan baru"
+          accessibilityHint="Membuka formulir pembuatan laporan warga"
+          onPress={onCreateReport}
+          style={({ pressed }) => [
+            styles.createReportButton,
+            pressed && styles.buttonPressed,
+          ]}
+        >
+          <Text style={styles.createReportButtonText}>
+            + Buat Laporan
           </Text>
         </Pressable>
       </View>
 
+      {/* REPORT DETAIL */}
       {selectedReport && (
         <View style={styles.reportCard}>
           <View style={styles.panelTopRow}>
-            <Text style={styles.panelTitle}>{selectedReport.title}</Text>
+            <Text style={styles.panelTitle}>
+              {selectedReport.title}
+            </Text>
+
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Tutup detail laporan"
               onPress={() => selectReport(null)}
             >
-              <Text style={styles.closeText}>Tutup</Text>
+              <Text style={styles.closeText}>
+                Tutup
+              </Text>
             </Pressable>
           </View>
-          <Text style={styles.mutedText}>{selectedReport.description}</Text>
-          <Text style={styles.distanceText}>
-            {distanceLabel ? `Jarak dari lokasi Anda: ${distanceLabel}` : 'Aktifkan GPS untuk menghitung jarak.'}
+
+          <Text style={styles.mutedText}>
+            {selectedReport.description}
           </Text>
+
+          <Text style={styles.distanceText}>
+            {distanceLabel
+              ? `Jarak dari lokasi Anda: ${distanceLabel}`
+              : 'Aktifkan GPS untuk menghitung jarak.'}
+          </Text>
+
           <Text style={styles.reportMeta}>
-            ID {selectedReport.id}  •  Status: {selectedReport.status}
+            ID {selectedReport.id} {' • '}
+            Status: {selectedReport.status}
           </Text>
         </View>
       )}
@@ -164,7 +300,11 @@ export default function MapScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F7F9FC' },
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#F7F9FC',
+  },
+
   header: {
     paddingHorizontal: 18,
     paddingVertical: 14,
@@ -172,19 +312,54 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  eyebrow: { color: '#2563EB', fontSize: 11, fontWeight: '800', letterSpacing: 1.5 },
-  heading: { color: '#14213D', fontSize: 21, fontWeight: '800', marginTop: 3 },
-  countBadge: { backgroundColor: '#E8F0FF', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20 },
-  countText: { color: '#1D4ED8', fontSize: 12, fontWeight: '700' },
-  mapContainer: { flex: 1, marginHorizontal: 12, borderRadius: 18, overflow: 'hidden', minHeight: 260 },
-  mapLandscape: { minHeight: 180 },
+
+  eyebrow: {
+    color: '#2563EB',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+  },
+
+  heading: {
+    color: '#14213D',
+    fontSize: 21,
+    fontWeight: '800',
+    marginTop: 3,
+  },
+
+  countBadge: {
+    backgroundColor: '#E8F0FF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+
+  countText: {
+    color: '#1D4ED8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  mapContainer: {
+    flex: 1,
+    marginHorizontal: 12,
+    borderRadius: 18,
+    overflow: 'hidden',
+    minHeight: 260,
+  },
+
+  mapLandscape: {
+    minHeight: 180,
+  },
+
   mapLoading: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(247,249,252,0.88)',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
   },
+
   panel: {
     backgroundColor: '#FFFFFF',
     margin: 12,
@@ -192,12 +367,42 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     gap: 8,
   },
-  panelTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  panelTitle: { fontSize: 15, color: '#14213D', fontWeight: '800', flexShrink: 1 },
-  statusText: { color: '#15803D', fontSize: 12, fontWeight: '700' },
-  coordinateText: { color: '#334155', fontSize: 12 },
-  mutedText: { color: '#64748B', fontSize: 12, lineHeight: 18 },
-  errorText: { color: '#B91C1C', fontSize: 12 },
+
+  panelTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+
+  panelTitle: {
+    fontSize: 15,
+    color: '#14213D',
+    fontWeight: '800',
+    flexShrink: 1,
+  },
+
+  statusText: {
+    color: '#15803D',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  coordinateText: {
+    color: '#334155',
+    fontSize: 12,
+  },
+
+  mutedText: {
+    color: '#64748B',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+
+  errorText: {
+    color: '#B91C1C',
+    fontSize: 12,
+  },
+
   locationButton: {
     backgroundColor: '#2563EB',
     borderRadius: 12,
@@ -205,8 +410,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 3,
   },
-  buttonPressed: { opacity: 0.78 },
-  locationButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
+
+  createReportButton: {
+    backgroundColor: '#0F766E',
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+    marginTop: 5,
+  },
+
+  buttonPressed: {
+    opacity: 0.78,
+  },
+
+  locationButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
+  createReportButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
   reportCard: {
     backgroundColor: '#FFFFFF',
     marginHorizontal: 12,
@@ -217,7 +445,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#DBEAFE',
   },
-  closeText: { color: '#2563EB', fontSize: 12, fontWeight: '700' },
-  distanceText: { color: '#1D4ED8', fontSize: 13, fontWeight: '700' },
-  reportMeta: { color: '#94A3B8', fontSize: 10 },
+
+  closeText: {
+    color: '#2563EB',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  distanceText: {
+    color: '#1D4ED8',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
+  reportMeta: {
+    color: '#94A3B8',
+    fontSize: 10,
+  },
 });
