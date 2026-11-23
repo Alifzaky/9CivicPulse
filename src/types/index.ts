@@ -9,6 +9,7 @@ export type CivicReport = {
   longitude: number;
   createdAt: string;
   status: 'submitted' | 'verified' | 'resolved';
+  jumlah_dukungan?: number;
 };
 
 export type Coordinates = {

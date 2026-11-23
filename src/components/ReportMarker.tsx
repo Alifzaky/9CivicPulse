@@ -7,11 +7,10 @@ type Props = {
   onPress: (report: CivicReport) => void;
 };
 
-const CATEGORY_COLOR: Record<CivicReport['category'], string> = {
-  road: '#E76F51',
-  streetlight: '#E9A23B',
-  flood: '#2878D0',
-  'public-facility': '#7B61A8',
+const STATUS_COLOR: Record<CivicReport['status'], string> = {
+  submitted: '#D64545',
+  verified: '#E9A23B',
+  resolved: '#2E9D62',
 };
 
 function ReportMarkerComponent({ report, onPress }: Props) {
@@ -20,7 +19,7 @@ function ReportMarkerComponent({ report, onPress }: Props) {
       coordinate={{ latitude: report.latitude, longitude: report.longitude }}
       title={report.title}
       description={report.description}
-      pinColor={CATEGORY_COLOR[report.category]}
+      pinColor={STATUS_COLOR[report.status]}
       onPress={() => onPress(report)}
     />
   );

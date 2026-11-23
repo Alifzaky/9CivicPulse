@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -17,6 +18,8 @@ import {
 
 import MapView, {
   Circle,
+  Heatmap,
+  Marker,
   PROVIDER_GOOGLE,
 } from 'react-native-maps';
 
@@ -27,7 +30,7 @@ import { MOCK_REPORTS } from '../data/mockReports';
 import { useLocationTracking } from '../hooks/useLocationTracking';
 import { useCivicStore } from '../store/useCivicStore';
 
-import type { CivicReport } from '../types';
+import type { CivicReport, Coordinates } from '../types';
 
 import {
   formatDistance,
@@ -44,6 +47,123 @@ const DEFAULT_REGION = {
   latitudeDelta: 0.035,
   longitudeDelta: 0.035,
 };
+
+type MapRegion = {
+  latitude: number;
+  longitude: number;
+  latitudeDelta: number;
+  longitudeDelta: number;
+};
+
+type MapSize = {
+  width: number;
+  height: number;
+};
+
+type ReportGroup = {
+  reports: CivicReport[];
+  coordinate: Coordinates;
+};
+
+type MapDisplayMode = 'pins' | 'heatmap' | 'both';
+
+const CLUSTER_DISTANCE = 48;
+
+function clusterReports(
+  reports: CivicReport[],
+  region: MapRegion,
+  size: MapSize,
+): ReportGroup[] {
+  if (size.width <= 0 || size.height <= 0) {
+    return reports.map((report) => ({
+      reports: [report],
+      coordinate: {
+        latitude: report.latitude,
+        longitude: report.longitude,
+      },
+    }));
+  }
+
+  const positions = reports.map((report) => ({
+    x:
+      ((report.longitude - region.longitude) /
+        region.longitudeDelta) *
+      size.width,
+    y:
+      ((region.latitude - report.latitude) /
+        region.latitudeDelta) *
+      size.height,
+  }));
+  const parents = reports.map((_, index) => index);
+  const findRoot = (index: number): number => {
+    let root = index;
+    while (parents[root] !== root) {
+      root = parents[root];
+    }
+    while (parents[index] !== index) {
+      const next = parents[index];
+      parents[index] = root;
+      index = next;
+    }
+    return root;
+  };
+  const join = (first: number, second: number) => {
+    const firstRoot = findRoot(first);
+    const secondRoot = findRoot(second);
+    if (firstRoot !== secondRoot) {
+      parents[secondRoot] = firstRoot;
+    }
+  };
+  const cells = new Map<string, number[]>();
+
+  positions.forEach((position, index) => {
+    const cellX = Math.floor(position.x / CLUSTER_DISTANCE);
+    const cellY = Math.floor(position.y / CLUSTER_DISTANCE);
+
+    for (let x = cellX - 1; x <= cellX + 1; x += 1) {
+      for (let y = cellY - 1; y <= cellY + 1; y += 1) {
+        for (const neighbor of cells.get(`${x}:${y}`) ?? []) {
+          const dx = position.x - positions[neighbor].x;
+          const dy = position.y - positions[neighbor].y;
+          if (dx * dx + dy * dy <= CLUSTER_DISTANCE ** 2) {
+            join(index, neighbor);
+          }
+        }
+      }
+    }
+
+    const key = `${cellX}:${cellY}`;
+    const cell = cells.get(key);
+    if (cell) {
+      cell.push(index);
+    } else {
+      cells.set(key, [index]);
+    }
+  });
+
+  const groups = new Map<number, CivicReport[]>();
+  reports.forEach((report, index) => {
+    const root = findRoot(index);
+    const group = groups.get(root);
+    if (group) {
+      group.push(report);
+    } else {
+      groups.set(root, [report]);
+    }
+  });
+
+  return Array.from(groups.values()).map((group) => ({
+    reports: group,
+    coordinate: {
+      latitude:
+        group.reduce((sum, report) => sum + report.latitude, 0) /
+        group.length,
+      longitude:
+        group.reduce((sum, report) => sum + report.longitude, 0) /
+        group.length,
+    },
+  }));
+}
 
 export default function MapScreen({
   onCreateReport,
@@ -75,6 +195,15 @@ export default function MapScreen({
   );
 
   const [mapReady, setMapReady] = useState(false);
+  const [mapRegion, setMapRegion] =
+    useState<MapRegion>(DEFAULT_REGION);
+  const [mapSize, setMapSize] = useState<MapSize>({
+    width: 0,
+    height: 0,
+  });
+  const [displayMode, setDisplayMode] =
+    useState<MapDisplayMode>('pins');
+  const mapRef = useRef<MapView | null>(null);
 
   // Inisialisasi laporan.
   useEffect(() => {
@@ -110,6 +239,87 @@ export default function MapScreen({
       selectReport(report.id);
     },
     [selectReport],
+  );
+
+  const reportGroups = useMemo(
+    () => clusterReports(reports, mapRegion, mapSize),
+    [mapRegion, mapSize, reports],
+  );
+
+  const heatmapPoints = useMemo(
+    () =>
+      reports.map((report) => {
+        const active = report.status !== 'resolved';
+        const supportCount = Math.max(
+          0,
+          report.jumlah_dukungan ?? 1,
+        );
+
+        return {
+          latitude: report.latitude,
+          longitude: report.longitude,
+          weight:
+            Math.log2(supportCount + 1) * (active ? 2 : 0.5),
+        };
+      }),
+    [reports],
+  );
+
+  const handleClusterPress = useCallback(
+    (group: ReportGroup) => {
+      if (group.reports.length < 2) {
+        return;
+      }
+
+      const pixelPositions = group.reports.map((report) => ({
+        x:
+          ((report.longitude - mapRegion.longitude) /
+            mapRegion.longitudeDelta) *
+          mapSize.width,
+        y:
+          ((mapRegion.latitude - report.latitude) /
+            mapRegion.latitudeDelta) *
+          mapSize.height,
+      }));
+      let nearestDistance = Number.POSITIVE_INFINITY;
+      for (let first = 0; first < pixelPositions.length; first += 1) {
+        for (
+          let second = first + 1;
+          second < pixelPositions.length;
+          second += 1
+        ) {
+          const dx =
+            pixelPositions[first].x - pixelPositions[second].x;
+          const dy =
+            pixelPositions[first].y - pixelPositions[second].y;
+          nearestDistance = Math.min(
+            nearestDistance,
+            Math.sqrt(dx * dx + dy * dy),
+          );
+        }
+      }
+
+      const zoomFactor =
+        nearestDistance > 0 && Number.isFinite(nearestDistance)
+          ? Math.min(0.5, (nearestDistance / 70) * 0.8)
+          : 0.25;
+
+      mapRef.current?.animateToRegion(
+        {
+          ...group.coordinate,
+          latitudeDelta: Math.max(
+            mapRegion.latitudeDelta * zoomFactor,
+            0.0001,
+          ),
+          longitudeDelta: Math.max(
+            mapRegion.longitudeDelta * zoomFactor,
+            0.0001,
+          ),
+        },
+        350,
+      );
+    },
+    [mapRegion, mapSize],
   );
 
   // Wilayah awal peta.
@@ -148,23 +358,66 @@ export default function MapScreen({
           styles.mapContainer,
           isLandscape && styles.mapLandscape,
         ]}
+        onLayout={(event) =>
+          setMapSize({
+            width: event.nativeEvent.layout.width,
+            height: event.nativeEvent.layout.height,
+          })
+        }
       >
         <MapView
+          ref={mapRef}
           style={StyleSheet.absoluteFill}
           provider={PROVIDER_GOOGLE}
           initialRegion={initialRegion}
           showsUserLocation
           showsMyLocationButton
           onMapReady={() => setMapReady(true)}
+          onRegionChangeComplete={setMapRegion}
           mapType="standard"
         >
-          {reports.map((report) => (
-            <ReportMarker
-              key={report.id}
-              report={report}
-              onPress={handleMarkerPress}
+          {(displayMode === 'heatmap' || displayMode === 'both') && (
+            <Heatmap
+              points={heatmapPoints}
+              radius={36}
+              opacity={0.75}
+              gradient={{
+                colors: [
+                  '#2563EB',
+                  '#22C55E',
+                  '#FACC15',
+                  '#B91C1C',
+                ],
+                startPoints: [0, 0.3, 0.65, 1],
+                colorMapSize: 256,
+              }}
             />
-          ))}
+          )}
+
+          {(displayMode === 'pins' || displayMode === 'both') &&
+            reportGroups.map((group) =>
+              group.reports.length === 1 ? (
+                <ReportMarker
+                  key={group.reports[0].id}
+                  report={group.reports[0]}
+                  onPress={handleMarkerPress}
+                />
+              ) : (
+                <Marker
+                  key={group.reports.map((report) => report.id).join('-')}
+                  coordinate={group.coordinate}
+                  onPress={() => handleClusterPress(group)}
+                  tracksViewChanges={false}
+                  accessibilityLabel={`${group.reports.length} laporan dalam cluster`}
+                >
+                  <View style={styles.clusterMarker}>
+                    <Text style={styles.clusterCount}>
+                      {group.reports.length}
+                    </Text>
+                  </View>
+                </Marker>
+              ),
+            )}
 
           {location && (
             <Circle
@@ -175,6 +428,40 @@ export default function MapScreen({
             />
           )}
         </MapView>
+
+        <View
+          accessibilityLabel="Pilih tampilan peta"
+          style={styles.displayControl}
+        >
+          {(
+            [
+              ['pins', 'Pin (Cluster)'],
+              ['heatmap', 'Heatmap'],
+              ['both', 'Keduanya'],
+            ] as const
+          ).map(([mode, label]) => (
+            <Pressable
+              key={mode}
+              accessibilityRole="button"
+              accessibilityState={{ selected: displayMode === mode }}
+              onPress={() => setDisplayMode(mode)}
+              style={[
+                styles.displayOption,
+                displayMode === mode && styles.displayOptionSelected,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.displayOptionText,
+                  displayMode === mode &&
+                    styles.displayOptionTextSelected,
+                ]}
+              >
+                {label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
 
         {!mapReady && (
           <View style={styles.mapLoading}>
@@ -350,6 +637,63 @@ const styles = StyleSheet.create({
 
   mapLandscape: {
     minHeight: 180,
+  },
+
+  displayControl: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 4,
+    gap: 3,
+    elevation: 4,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.16,
+    shadowRadius: 6,
+  },
+
+  displayOption: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+
+  displayOptionSelected: {
+    backgroundColor: '#2563EB',
+  },
+
+  displayOptionText: {
+    color: '#334155',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  displayOptionTextSelected: {
+    color: '#FFFFFF',
+  },
+
+  clusterMarker: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 22,
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    backgroundColor: '#2563EB',
+    elevation: 4,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+
+  clusterCount: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
   },
 
   mapLoading: {
